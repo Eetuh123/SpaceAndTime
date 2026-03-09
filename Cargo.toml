@@ -7,3 +7,4 @@ edition = "2024"
 winit = "0.29"
 wgpu = "0.20"
 pollster = "0.3"
+bytemuck = { version = "1.25.0", features = ["derive"] }
