@@ -1,9 +1,7 @@
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    event::*, event_loop::{ControlFlow, EventLoop}, window::WindowBuilder
 };
 
 #[repr(C)]
@@ -35,7 +33,9 @@ struct Gfx {
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
     num_vertices: u32,
+    num_indices: u32,
     vertex_buffer: wgpu::Buffer, // For contiguous access to data in gpu memory
+    index_buffer: wgpu::Buffer,
     size: winit::dpi::PhysicalSize<u32>,
 }
 
@@ -57,6 +57,35 @@ impl Vertex {
                 },
             ],
         }
+    }
+    fn generate_grid() -> (Vec<Vertex>, Vec<u16>) {
+        let mut indices: Vec<u16> = vec![]; // Drawing order list 3 values in row will be connected
+        let mut vertices: Vec<Vertex> = vec![];
+        let mut x = -1.0;
+        let mut y = -1.0;
+        let z = 0.0;
+        for row in 0..2 {
+            x = -1.0;
+            if row == 1 {
+                y = 1.0;
+            }
+            for col in 0..2 {
+                if col == 1 {
+                    x = 1.0
+                }
+            vertices.push(Vertex {
+                position: [x,y,z],
+                color: [1.0,1.0,1.0]
+            });
+            }
+        }
+        indices.push(0);
+        indices.push(1);
+        indices.push(2);
+        indices.push(1);
+        indices.push(3);
+        indices.push(2);
+        (vertices, indices)
     }
 }
 
@@ -101,13 +130,26 @@ impl Gfx {
         let render_pipeline =
             Gfx::create_pipeline(&device, &render_pipeline_layout, &shader, format);
 
+//        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+//            label: Some("Vertex Buffer"),
+//            contents: bytemuck::cast_slice(VERTICES),
+//            usage: wgpu::BufferUsages::VERTEX,
+//        });
+        let (vertices, indices) = Vertex::generate_grid();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+            contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-
-        let num_vertices = VERTICES.len() as u32;
+        //  We use our Device (like a remove to our specific GPU) buffer pushes the data into GPU
+        let index_buffer= device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Indedx Buffer"),
+            contents: bytemuck::cast_slice(&indices), // Converts Vec into raw bytes so GPU understands
+            usage: wgpu::BufferUsages::INDEX, // It tells how to use this specific buffer
+        });
+        // We collect the sizes of our vertecies for future loop
+        let num_vertices = vertices.len() as u32;
+        let num_indices = indices.len() as u32;
 
         let gfx = Gfx {
             surface,
@@ -126,7 +168,9 @@ impl Gfx {
             },
             size,
             vertex_buffer,
-            num_vertices
+            index_buffer,
+            num_vertices,
+            num_indices,
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
@@ -221,8 +265,12 @@ impl Gfx {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.render_pipeline);
+            // We bind out vertexes to our first buffer slot, Secondly we let our vertex buffer use whole buffer
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.draw(0..self.num_vertices, 0..1);
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            // We loop though our indeci buffer draw all the indicies in order (0,1,2 -> traingle 1) (1,3,2 -> traingle 2)
+            pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            //pass.draw(0..self.num_vertices, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
