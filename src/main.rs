@@ -64,27 +64,29 @@ impl Vertex {
         let mut x = -1.0;
         let mut y = -1.0;
         let z = 0.0;
-        for row in 0..2 {
+        for row in 0..=10 {
             x = -1.0;
-            if row == 1 {
-                y = 1.0;
+            if row >= 1 {
+                y = y + 0.2;
             }
-            for col in 0..2 {
-                if col == 1 {
-                    x = 1.0
-                }
+            for col in 0..=10 {
             vertices.push(Vertex {
                 position: [x,y,z],
                 color: [1.0,1.0,1.0]
             });
+            x = x + 0.2;
             }
         }
-        indices.push(0);
-        indices.push(1);
-        indices.push(2);
-        indices.push(1);
-        indices.push(3);
-        indices.push(2);
+        for  row in 0..10 {
+            for col in 0..10 {
+                indices.push(row * 11 + col);
+                indices.push(row * 11 + col + 1);
+                indices.push((row + 1) * 11 + col);
+                indices.push((row + 1) * 11 + col);
+                indices.push(row * 11 + col + 1);
+                indices.push((row + 1) * 11 + col + 1);
+            }
+        }
         (vertices, indices)
     }
 }
@@ -105,7 +107,7 @@ impl Gfx {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::POLYGON_MODE_LINE,
                 required_limits: wgpu::Limits::default(),
             },
             None,
@@ -205,11 +207,11 @@ impl Gfx {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::LineList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Line, //How pollygons are rendered Fill,Line
                 unclipped_depth: false,
                 conservative: false,
             },
