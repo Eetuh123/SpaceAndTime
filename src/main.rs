@@ -1,10 +1,13 @@
+mod camera;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
+use glam::Vec3;
+use winit::keyboard::KeyCode;
+use wgpu::{BufferUsages, util::DeviceExt};
 use winit::{
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
+
+use crate::camera::{Camera, CameraController, CameraUniform};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -35,6 +38,11 @@ struct Gfx {
     config: wgpu::SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
     num_vertices: u32,
+    camera: Camera,
+    camera_controller: CameraController,
+    camera_uniform: CameraUniform,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer, // For contiguous access to data in gpu memory
     size: winit::dpi::PhysicalSize<u32>,
 }
@@ -61,6 +69,11 @@ impl Vertex {
 }
 
 impl Gfx {
+    fn update(&mut self) {
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+    }
     fn new(window: &Arc<winit::window::Window>) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::default();
@@ -88,18 +101,8 @@ impl Gfx {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
-                push_constant_ranges: &[],
-            });
-
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats[0];
-
-        let render_pipeline =
-            Gfx::create_pipeline(&device, &render_pipeline_layout, &shader, format);
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -109,10 +112,74 @@ impl Gfx {
 
         let num_vertices = VERTICES.len() as u32;
 
+        let camera = Camera {
+            eye: (0.0, 1.0, 2.0).into(),
+            target: (0.0,0.0,0.0).into(),
+            up: Vec3::Y,
+            aspect: size.width as f32 / size.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }
+            ], 
+        label: Some("camera_bind_group_layout"),
+        });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }
+        ],
+        label: Some("camera_bind_group"),
+        });
+
+        let render_pipeline_layout = device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[
+                    &camera_bind_group_layout
+                ],
+                push_constant_ranges: &[],
+            }
+        );
+        let render_pipeline = Gfx::create_pipeline(&device, &render_pipeline_layout, &shader, format);
+
+        let camera_controller = CameraController::new(0.2);
+
         let gfx = Gfx {
             surface,
             device,
             queue,
+            camera,
+            camera_controller,
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
             render_pipeline,
             config: wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -221,6 +288,7 @@ impl Gfx {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.draw(0..self.num_vertices, 0..1);
         }
@@ -251,6 +319,21 @@ fn main() {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::Resized(new_size) => gfx.resize(new_size),
+                    WindowEvent::KeyboardInput { 
+                        event: KeyEvent {
+                            physical_key: PhysicalKey::Code(keycode),
+                            state,
+                            ..
+                        },
+                    ..
+                } => {
+                            let is_pressed = state == ElementState::Pressed;
+                            if keycode == KeyCode::Escape && is_pressed {
+                                elwt.exit();
+                            } else {
+                                gfx.camera_controller.handle_key(keycode, is_pressed);
+                            }
+                        }
                     WindowEvent::RedrawRequested => match gfx.render() {
                         Ok(_) => {}
                         Err(wgpu::SurfaceError::Lost) => gfx.resize(gfx.size),
@@ -260,6 +343,7 @@ fn main() {
                     _ => {}
                 },
                 Event::AboutToWait => {
+                    gfx.update();
                     window.request_redraw();
                 }
                 _ => {}
