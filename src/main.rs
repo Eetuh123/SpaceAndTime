@@ -16,21 +16,6 @@ struct Vertex {
     color: [f32; 3],
 }
 
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [0.0, 0.5, 0.0],
-        color: [1.0, 0.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, 0.0],
-        color: [0.0, 1.0, 0.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, 0.0],
-        color: [0.0, 0.0, 1.0],
-    },
-];
-
 struct Gfx {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -43,7 +28,9 @@ struct Gfx {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    num_indices: u32,
     vertex_buffer: wgpu::Buffer, // For contiguous access to data in gpu memory
+    index_buffer: wgpu::Buffer,
     size: winit::dpi::PhysicalSize<u32>,
 }
 
@@ -66,6 +53,37 @@ impl Vertex {
             ],
         }
     }
+    fn generate_grid() -> (Vec<Vertex>, Vec<u16>) {
+        let mut indices: Vec<u16> = vec![]; // Drawing order list 3 values in row will be connected
+        let mut vertices: Vec<Vertex> = vec![];
+        let mut x = -1.0;
+        let mut y = -1.0;
+        let z = 0.0;
+        for row in 0..=10 {
+            x = -1.0;
+            if row >= 1 {
+                y = y + 0.2;
+            }
+            for col in 0..=10 {
+            vertices.push(Vertex {
+                position: [x,y,z],
+                color: [1.0,1.0,1.0]
+            });
+            x = x + 0.2;
+            }
+        }
+        for  row in 0..10 {
+            for col in 0..10 {
+                indices.push(row * 11 + col);
+                indices.push(row * 11 + col + 1);
+                indices.push((row + 1) * 11 + col);
+                indices.push((row + 1) * 11 + col);
+                indices.push(row * 11 + col + 1);
+                indices.push((row + 1) * 11 + col + 1);
+            }
+        }
+        (vertices, indices)
+    }
 }
 
 impl Gfx {
@@ -85,7 +103,7 @@ impl Gfx {
             target: (0.0,0.0,0.0).into(),
             up: Vec3::Y,
             aspect: size.width as f32 / size.height as f32,
-            fovy: 45.0,
+            fovy: 35.0,
             znear: 0.1,
             zfar: 100.0,
         };
@@ -104,7 +122,7 @@ impl Gfx {
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::POLYGON_MODE_LINE,
                 required_limits: wgpu::Limits::default(),
             },
             None,
@@ -119,13 +137,21 @@ impl Gfx {
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats[0];
 
+        let (vertices, indices) = Vertex::generate_grid();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+            contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-
-        let num_vertices = VERTICES.len() as u32;
+        //  We use our Device (like a remove to our specific GPU) buffer pushes the data into GPU
+        let index_buffer= device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Indedx Buffer"),
+            contents: bytemuck::cast_slice(&indices), // Converts Vec into raw bytes so GPU understands
+            usage: wgpu::BufferUsages::INDEX, // It tells how to use this specific buffer
+        });
+        // We collect the sizes of our vertecies for future loop
+        let num_vertices = vertices.len() as u32;
+        let num_indices = indices.len() as u32;
 
         let (camera_buffer, camera_bind_group_layout, camera_bind_group) = Gfx::init_camera_gpu(&device, &camera_uniform);
         // This is all the layout what will ever be used
@@ -164,7 +190,9 @@ impl Gfx {
             },
             size,
             vertex_buffer,
-            num_vertices
+            index_buffer,
+            num_vertices,
+            num_indices,
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
@@ -240,11 +268,11 @@ impl Gfx {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
+                topology: wgpu::PrimitiveTopology::LineList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
+                cull_mode: Some(wgpu::Face::Front),
+                polygon_mode: wgpu::PolygonMode::Line, //How pollygons are rendered Fill,Line
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -301,8 +329,12 @@ impl Gfx {
             });
             pass.set_pipeline(&self.render_pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            // We bind out vertexes to our first buffer slot, Secondly we let our vertex buffer use whole buffer
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.draw(0..self.num_vertices, 0..1);
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            // We loop though our indeci buffer draw all the indicies in order (0,1,2 -> traingle 1) (1,3,2 -> traingle 2)
+            pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            //pass.draw(0..self.num_vertices, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
