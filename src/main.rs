@@ -1,5 +1,5 @@
 mod camera;
-use std::sync::Arc;
+use std::{f32::consts::PI, sync::Arc};
 use glam::Vec3;
 use winit::keyboard::KeyCode;
 use wgpu::{BufferUsages, util::DeviceExt};
@@ -53,6 +53,44 @@ impl Vertex {
             ],
         }
     }
+    fn generate_sphere() -> (Vec<Vertex>, Vec<u16>) {
+        let mut indices: Vec<u16> = vec![];
+        let mut vertices: Vec<Vertex> = vec![];
+        let d_center: f32 = 0.5;
+        
+        for ring in 0..=12 { // theta = top to bottom
+            let theta = ring as f32 * (PI / 12.0);
+            for point in 0..12 { // phi = around the ring
+                let phi = point as f32 * (2.0 * PI / 12.0);
+                let x = d_center * theta.sin() * phi.cos();
+                let y = d_center * theta.sin() * phi.sin();
+                let z = d_center * theta.cos();
+                vertices.push(Vertex {
+                    position: [x, y, z],
+                    color: [1.0, 1.0, 1.0],
+                });
+            }
+        }
+        // Horizontal slice LEFT AND RIGHT
+        for ring in 0..12 {
+            // Vertical slice UP AND DOWN
+            for segment in 0..12 {
+                let bottom_l = ring * 12 + segment;
+                let bottom_r = if segment == 11 { ring * 12 } else { ring * 12 + segment + 1 };
+                let top_l = (ring + 1) * 12 + segment;
+                let top_r = if segment == 11 { (ring + 1) * 12 } else { (ring + 1) * 12 + segment + 1 };
+
+                indices.push(bottom_l);
+                indices.push(bottom_r);
+                indices.push(top_l);
+                indices.push(top_l);
+                indices.push(bottom_r);
+                indices.push(top_r);
+            }
+        }
+
+        (vertices, indices)
+    }
     fn generate_grid() -> (Vec<Vertex>, Vec<u16>) {
         let mut indices: Vec<u16> = vec![]; // Drawing order list 3 values in row will be connected
         let mut vertices: Vec<Vertex> = vec![];
@@ -74,12 +112,15 @@ impl Vertex {
         }
         for  row in 0..10 {
             for col in 0..10 {
-                indices.push(row * 11 + col);
-                indices.push(row * 11 + col + 1);
+                if row < 9 {
                 indices.push((row + 1) * 11 + col);
-                indices.push((row + 1) * 11 + col);
+                indices.push((row + 1) * 11 + col + 1);
+                }
+                if col < 9 {
                 indices.push(row * 11 + col + 1);
                 indices.push((row + 1) * 11 + col + 1);
+                }
+
             }
         }
         (vertices, indices)
@@ -137,7 +178,8 @@ impl Gfx {
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats[0];
 
-        let (vertices, indices) = Vertex::generate_grid();
+        let (test1, test2) = Vertex::generate_sphere();
+        let (vertices, indices) = Vertex::generate_sphere();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
