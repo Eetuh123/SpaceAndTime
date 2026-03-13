@@ -79,6 +79,21 @@ impl Gfx {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
 
+        // We create Camera type variable
+        let camera = Camera {
+            eye: (0.0, 1.0, 2.0).into(),
+            target: (0.0,0.0,0.0).into(),
+            up: Vec3::Y,
+            aspect: size.width as f32 / size.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        };
+
+        // We create conversion of camera struct to more GPU friendly format (flat matrix)
+        let mut camera_uniform = CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -112,52 +127,8 @@ impl Gfx {
 
         let num_vertices = VERTICES.len() as u32;
 
-        let camera = Camera {
-            eye: (0.0, 1.0, 2.0).into(),
-            target: (0.0,0.0,0.0).into(),
-            up: Vec3::Y,
-            aspect: size.width as f32 / size.height as f32,
-            fovy: 45.0,
-            znear: 0.1,
-            zfar: 100.0,
-        };
-
-        let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera);
-
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }
-            ], 
-        label: Some("camera_bind_group_layout"),
-        });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }
-        ],
-        label: Some("camera_bind_group"),
-        });
-
+        let (camera_buffer, camera_bind_group_layout, camera_bind_group) = Gfx::init_camera_gpu(&device, &camera_uniform);
+        // This is all the layout what will ever be used
         let render_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -200,6 +171,47 @@ impl Gfx {
         gfx
     }
 
+    // camera buffer/slot creation and filling
+    fn init_camera_gpu(
+        device: &wgpu::Device,
+        camera_uniform: &CameraUniform) -> (wgpu::Buffer, wgpu::BindGroupLayout,wgpu::BindGroup) {
+         // camera bugger what is like camera position multiplier
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Buffer"),
+            contents: bytemuck::cast_slice(&[*camera_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // blueprint telling wgpu to expect a uniform buffer at binding slot 0, visible only to vertex shader
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }
+            ], 
+        label: Some("camera_bind_group_layout"),
+        });
+        // we bassiclly asign something to our just created slot
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &camera_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }
+        ],
+        label: Some("camera_bind_group"),
+        });
+
+        (camera_buffer,camera_bind_group_layout,camera_bind_group)
+    }
     fn create_pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
