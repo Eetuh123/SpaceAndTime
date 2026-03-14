@@ -2,7 +2,7 @@ mod camera;
 use std::{f32::consts::PI, sync::Arc};
 use glam::Vec3;
 use winit::keyboard::KeyCode;
-use wgpu::{BufferUsages, util::DeviceExt};
+use wgpu::util::DeviceExt;
 use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
@@ -394,6 +394,7 @@ impl Gfx {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
+            // We give renderer Camera data so it can use it do caculation based on camera angle
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             //draw Sphere
             pass.set_pipeline(&self.triangle_render_pipeline);
