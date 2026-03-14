@@ -1,8 +1,8 @@
 mod camera;
-use std::sync::Arc;
+use std::{f32::consts::PI, sync::Arc};
 use glam::Vec3;
 use winit::keyboard::KeyCode;
-use wgpu::{BufferUsages, util::DeviceExt};
+use wgpu::util::DeviceExt;
 use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
@@ -16,21 +16,25 @@ struct Vertex {
     color: [f32; 3],
 }
 
+struct Mesh {
+    vertex_buffer: wgpu::Buffer, // For contiguous access to data in gpu memory
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
+}
+
 struct Gfx {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    render_pipeline: wgpu::RenderPipeline,
-    num_vertices: u32,
+    triangle_render_pipeline: wgpu::RenderPipeline,
+    line_list_render_pipeline: wgpu::RenderPipeline,
     camera: Camera,
     camera_controller: CameraController,
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    num_indices: u32,
-    vertex_buffer: wgpu::Buffer, // For contiguous access to data in gpu memory
-    index_buffer: wgpu::Buffer,
+    meshes: Vec<Mesh>,
     size: winit::dpi::PhysicalSize<u32>,
 }
 
@@ -53,6 +57,44 @@ impl Vertex {
             ],
         }
     }
+    fn generate_sphere() -> (Vec<Vertex>, Vec<u16>) {
+        let mut indices: Vec<u16> = vec![];
+        let mut vertices: Vec<Vertex> = vec![];
+        let d_center: f32 = 0.5;
+        
+        for ring in 0..=12 { // theta = top to bottom
+            let theta = ring as f32 * (PI / 12.0);
+            for point in 0..12 { // phi = around the ring
+                let phi = point as f32 * (2.0 * PI / 12.0);
+                let x = d_center * theta.sin() * phi.cos();
+                let y = d_center * theta.sin() * phi.sin();
+                let z = d_center * theta.cos();
+                vertices.push(Vertex {
+                    position: [x, y, z],
+                    color: [1.0, 1.0, 1.0],
+                });
+            }
+        }
+        // Horizontal slice LEFT AND RIGHT
+        for ring in 0..12 {
+            // Vertical slice UP AND DOWN
+            for segment in 0..12 {
+                let bottom_l = ring * 12 + segment;
+                let bottom_r = if segment == 11 { ring * 12 } else { ring * 12 + segment + 1 };
+                let top_l = (ring + 1) * 12 + segment;
+                let top_r = if segment == 11 { (ring + 1) * 12 } else { (ring + 1) * 12 + segment + 1 };
+
+                indices.push(bottom_l);
+                indices.push(bottom_r);
+                indices.push(top_l);
+                indices.push(top_l);
+                indices.push(bottom_r);
+                indices.push(top_r);
+            }
+        }
+
+        (vertices, indices)
+    }
     fn generate_grid() -> (Vec<Vertex>, Vec<u16>) {
         let mut indices: Vec<u16> = vec![]; // Drawing order list 3 values in row will be connected
         let mut vertices: Vec<Vertex> = vec![];
@@ -74,12 +116,15 @@ impl Vertex {
         }
         for  row in 0..10 {
             for col in 0..10 {
-                indices.push(row * 11 + col);
-                indices.push(row * 11 + col + 1);
+                if row < 9 {
                 indices.push((row + 1) * 11 + col);
-                indices.push((row + 1) * 11 + col);
+                indices.push((row + 1) * 11 + col + 1);
+                }
+                if col < 9 {
                 indices.push(row * 11 + col + 1);
                 indices.push((row + 1) * 11 + col + 1);
+                }
+
             }
         }
         (vertices, indices)
@@ -137,22 +182,14 @@ impl Gfx {
         let caps = surface.get_capabilities(&adapter);
         let format = caps.formats[0];
 
-        let (vertices, indices) = Vertex::generate_grid();
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        //  We use our Device (like a remove to our specific GPU) buffer pushes the data into GPU
-        let index_buffer= device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Indedx Buffer"),
-            contents: bytemuck::cast_slice(&indices), // Converts Vec into raw bytes so GPU understands
-            usage: wgpu::BufferUsages::INDEX, // It tells how to use this specific buffer
-        });
-        // We collect the sizes of our vertecies for future loop
-        let num_vertices = vertices.len() as u32;
-        let num_indices = indices.len() as u32;
+        let (sphere_vertecies, sphere_indices) = Vertex::generate_sphere();
+        let (grid_vertices, grid_indices) = Vertex::generate_grid();
 
+        let meshes: Vec<Mesh> = vec![
+            Gfx::create_mesh(&device, &sphere_vertecies, &sphere_indices),
+            Gfx::create_mesh(&device, &grid_vertices, &grid_indices),
+        ];
+ 
         let (camera_buffer, camera_bind_group_layout, camera_bind_group) = Gfx::init_camera_gpu(&device, &camera_uniform);
         // This is all the layout what will ever be used
         let render_pipeline_layout = device.create_pipeline_layout(
@@ -164,7 +201,11 @@ impl Gfx {
                 push_constant_ranges: &[],
             }
         );
-        let render_pipeline = Gfx::create_pipeline(&device, &render_pipeline_layout, &shader, format);
+        let line_list_render_pipeline = Gfx::create_pipeline(
+            &device, &render_pipeline_layout, &shader, format, wgpu::PrimitiveTopology::LineList, wgpu::PolygonMode::Line);
+        let triangle_render_pipeline = Gfx::create_pipeline(
+            &device, &render_pipeline_layout, &shader, format, wgpu::PrimitiveTopology::TriangleList, wgpu::PolygonMode::Fill);
+
 
         let camera_controller = CameraController::new(0.2);
 
@@ -177,7 +218,8 @@ impl Gfx {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
-            render_pipeline,
+            line_list_render_pipeline,
+            triangle_render_pipeline,
             config: wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format,
@@ -189,14 +231,37 @@ impl Gfx {
                 desired_maximum_frame_latency: 2,
             },
             size,
-            vertex_buffer,
-            index_buffer,
-            num_vertices,
-            num_indices,
+            meshes,
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
         gfx
+    }
+
+    fn create_mesh(
+        device: &wgpu::Device,
+        vertices: &[Vertex],
+        indices: &[u16],
+    ) -> Mesh {
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        //  We use our Device (like a remove to our specific GPU) buffer pushes the data into GPU
+        let index_buffer= device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Indedx Buffer"),
+            contents: bytemuck::cast_slice(&indices), // Converts Vec into raw bytes so GPU understands
+            usage: wgpu::BufferUsages::INDEX, // It tells how to use this specific buffer
+        });
+        // We collect the sizes of our vertecies for future loop
+        let num_indices = indices.len() as u32;
+
+        Mesh {
+            vertex_buffer,
+            index_buffer,
+            num_indices,
+        }
     }
 
     // camera buffer/slot creation and filling
@@ -245,6 +310,8 @@ impl Gfx {
         layout: &wgpu::PipelineLayout,
         shader: &wgpu::ShaderModule,
         format: wgpu::TextureFormat,
+        topology: wgpu::PrimitiveTopology,
+        polygon_mode: wgpu::PolygonMode,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
@@ -268,11 +335,11 @@ impl Gfx {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
+                topology: topology,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Front),
-                polygon_mode: wgpu::PolygonMode::Line, //How pollygons are rendered Fill,Line
+                polygon_mode: polygon_mode, //How pollygons are rendered Fill,Line
                 unclipped_depth: false,
                 conservative: false,
             },
@@ -327,14 +394,20 @@ impl Gfx {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.render_pipeline);
+            // We give renderer Camera data so it can use it do caculation based on camera angle
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            //draw Sphere
+            pass.set_pipeline(&self.triangle_render_pipeline);
             // We bind out vertexes to our first buffer slot, Secondly we let our vertex buffer use whole buffer
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_vertex_buffer(0, self.meshes[0].vertex_buffer.slice(..));
+            pass.set_index_buffer(self.meshes[0].index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             // We loop though our indeci buffer draw all the indicies in order (0,1,2 -> traingle 1) (1,3,2 -> traingle 2)
-            pass.draw_indexed(0..self.num_indices, 0, 0..1);
-            //pass.draw(0..self.num_vertices, 0..1);
+            pass.draw_indexed(0..self.meshes[0].num_indices, 0, 0..1);
+            // Draw Wireframe
+            pass.set_pipeline(&self.line_list_render_pipeline);
+            pass.set_vertex_buffer(0, self.meshes[1].vertex_buffer.slice(..));
+            pass.set_index_buffer(self.meshes[1].index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.draw_indexed(0..self.meshes[1].num_indices, 0, 0..1);
         }
 
         self.queue.submit(Some(encoder.finish()));
