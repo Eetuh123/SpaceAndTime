@@ -80,10 +80,20 @@ impl CameraController {
         let speed = if self.is_shift_pressed { self.speed * 1.0 } else { self.speed };
 
         if self.is_up_pressed && forward_mag > speed {
+            if self.is_shift_pressed {
+                camera.eye += camera.up * speed;
+                camera.target += camera.up * speed;
+            } else {
             camera.eye += forward_norm * speed;
+            }
         }
         if self.is_down_pressed {
+            if self.is_shift_pressed {
+                camera.eye -= camera.up * speed;
+                camera.target -= camera.up * speed;
+            } else {
             camera.eye -= forward_norm * speed;
+            }
         }
         
         let right = forward_norm.cross(camera.up);

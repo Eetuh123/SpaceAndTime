@@ -49,8 +49,11 @@ struct Gfx {
     meshes: Vec<Mesh>,
     size: winit::dpi::PhysicalSize<u32>,
     depth_texture: Texture,
-    instances: Vec<MeshInstance>,
-    instance_buffer: wgpu::Buffer,
+    grid_instances: Vec<MeshInstance>,
+    sphere_instances: Vec<MeshInstance>,
+    grid_instances_buffer: wgpu::Buffer,
+    sphere_instances_buffer: wgpu::Buffer,
+
 }
 
 impl MeshInstanceRaw {
@@ -113,8 +116,8 @@ impl Vertex {
             ],
         }
     }
-    fn generate_sphere() -> (Vec<Vertex>, Vec<u16>) {
-        let mut indices: Vec<u16> = vec![];
+    fn generate_sphere() -> (Vec<Vertex>, Vec<u32>) {
+        let mut indices: Vec<u32> = vec![];
         let mut vertices: Vec<Vertex> = vec![];
         let d_center: f32 = -0.2;
         
@@ -151,34 +154,30 @@ impl Vertex {
 
         (vertices, indices)
     }
-    fn generate_grid() -> (Vec<Vertex>, Vec<u16>) {
-        let mut indices: Vec<u16> = vec![]; // Drawing order list 3 values in row will be connected
+    fn generate_grid() -> (Vec<Vertex>, Vec<u32>) {
+        let size: f32 = 8.0;
+        let start = -size;
+        let lines: f32 = 100.0;
+        let step = (size * 2.0) / lines;
+        let mut indices: Vec<u32> = vec![]; // Drawing order list 3 values in row will be connected
         let mut vertices: Vec<Vertex> = vec![];
-        let mut x = -1.0;
-        let y = 0.0;
-        let mut z = 0.0;
-        for row in 0..=10 {
-            x = -1.0;
-            if row >= 1 {
-                z = z + 0.2;
-            }
-            for col in 0..=10 {
+        for row in 0..=lines as u32 {
+            for col in 0..=lines as u32 {
             vertices.push(Vertex {
-                position: [x,y,z],
+                position: [(col as f32 * step) + start,0.0,(row as f32 * step) + start],
                 color: [1.0,1.0,1.0]
             });
-            x = x + 0.2;
             }
         }
-        for  row in 0..10 {
-            for col in 0..10 {
-                if row < 9 {
-                indices.push((row + 1) * 11 + col);
-                indices.push((row + 1) * 11 + col + 1);
+        for  row in 0..lines as u32 {
+            for col in 0..lines as u32 {
+                if row < (lines as u32 - 1) {
+                indices.push((row + 1) * (lines as u32 + 1) + col);
+                indices.push((row + 1) * (lines as u32 + 1) + col + 1);
                 }
-                if col < 9 {
-                indices.push(row * 11 + col + 1);
-                indices.push((row + 1) * 11 + col + 1);
+                if col < (lines as u32 - 1) {
+                indices.push(row * (lines as u32 + 1) + col + 1);
+                indices.push((row + 1) * (lines as u32 + 1) + col + 1);
                 }
 
             }
@@ -276,21 +275,23 @@ impl Gfx {
                 desired_maximum_frame_latency: 2,
         };
 
-        let instances = vec![
+        let sphere_instances = vec![
             MeshInstance {
-                translation: Vec3::new(0.0, 0.5, 0.0),
+                translation: Vec3::new(0.0, 2.0, 0.0),
+                scale: Vec3::ONE,
+                rotation: Quat::IDENTITY,
+            }
+        ];
+        let grid_instances = vec![
+            MeshInstance {
+                translation: Vec3::ZERO,
                 scale: Vec3::ONE,
                 rotation: Quat::IDENTITY,
             }
         ];
 
-        let instance_data = instances.iter().map(MeshInstance::to_raw).collect::<Vec<_>>();
-        let instance_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor{
-                label: Some("Instance Buffer"),
-                contents: bytemuck::cast_slice(&instance_data),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let sphere_instances_buffer = Gfx::create_instance_buffer(&device, &sphere_instances);
+        let grid_instances_buffer = Gfx::create_instance_buffer(&device, &grid_instances);
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
@@ -309,18 +310,36 @@ impl Gfx {
             size,
             meshes,
             depth_texture,
-            instances,
-            instance_buffer,
+            grid_instances,
+            sphere_instances,
+            grid_instances_buffer,
+            sphere_instances_buffer,
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
         gfx
     }
 
+    fn create_instance_buffer(
+        device: &wgpu::Device,
+        instances: &[MeshInstance],
+    ) -> wgpu::Buffer {
+
+        let instance_data = instances.iter().map(MeshInstance::to_raw).collect::<Vec<_>>();
+        let instance_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor{
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&instance_data),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            
+        instance_buffer
+    }
+
     fn create_mesh(
         device: &wgpu::Device,
         vertices: &[Vertex],
-        indices: &[u16],
+        indices: &[u32],
     ) -> Mesh {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
@@ -495,17 +514,19 @@ impl Gfx {
             pass.set_pipeline(&self.triangle_render_pipeline);
             // We bind our vertices to slot 0, instance transforms to slot 1
             pass.set_vertex_buffer(0, self.meshes[0].vertex_buffer.slice(..));
-            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            pass.set_index_buffer(self.meshes[0].index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_vertex_buffer(1, self.sphere_instances_buffer.slice(..));
+            pass.set_index_buffer(self.meshes[0].index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             // Draw all indices, once per instance
-            pass.draw_indexed(0..self.meshes[0].num_indices, 0, 0..self.instances.len() as _);
+            pass.draw_indexed(0..self.meshes[0].num_indices, 0, 0..self.sphere_instances.len() as _);
 
             // Draw Wireframe grid
             pass.set_pipeline(&self.line_list_render_pipeline);
             pass.set_vertex_buffer(0, self.meshes[1].vertex_buffer.slice(..));
-            pass.set_index_buffer(self.meshes[1].index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            // Single instance, no instancing needed for the grid
-            pass.draw_indexed(0..self.meshes[1].num_indices, 0, 0..1);
+            // We bind our vertices to slot 0, instance transforms to slot 1
+            pass.set_vertex_buffer(1, self.grid_instances_buffer.slice(..));
+            pass.set_index_buffer(self.meshes[1].index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            // Draw all indices, once per instance
+            pass.draw_indexed(0..self.meshes[1].num_indices, 0, 0..self.grid_instances.len() as _);
         }
 
         self.queue.submit(Some(encoder.finish()));
