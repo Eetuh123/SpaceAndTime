@@ -1,9 +1,9 @@
 mod camera;
 mod texture;
 use std::{f32::consts::PI, sync::Arc};
-use glam::Vec3;
-use winit::keyboard::KeyCode;
-use wgpu::{util::DeviceExt};
+use glam::{Mat4, Quat, Vec3};
+use winit::{dpi::Position, keyboard::KeyCode};
+use wgpu::{Instance, core::instance, util::DeviceExt};
 use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
@@ -23,6 +23,16 @@ struct Mesh {
     index_buffer: wgpu::Buffer,
     num_indices: u32,
 }
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct MeshInstanceRaw {
+    model: [[f32; 4]; 4],
+}
+struct MeshInstance {
+    scale: Vec3,
+    rotation: Quat,
+    translation: Vec3,
+}
 
 struct Gfx {
     surface: wgpu::Surface<'static>,
@@ -39,6 +49,49 @@ struct Gfx {
     meshes: Vec<Mesh>,
     size: winit::dpi::PhysicalSize<u32>,
     depth_texture: Texture,
+    instances: Vec<MeshInstance>,
+    instance_buffer: wgpu::Buffer,
+}
+
+impl MeshInstanceRaw {
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        use std::mem;
+        wgpu::VertexBufferLayout {
+            array_stride: mem::size_of::<MeshInstanceRaw>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 5,
+                format: wgpu::VertexFormat::Float32x4
+            },
+            wgpu::VertexAttribute {
+                offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
+                shader_location: 6,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
+                shader_location: 7,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
+                shader_location: 8,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            
+        ]
+        }
+    }
+}
+
+impl MeshInstance {
+    fn to_raw(&self) -> MeshInstanceRaw {
+        MeshInstanceRaw { 
+            model: (Mat4::from_scale_rotation_translation(self.scale,self.rotation,self.translation)).to_cols_array_2d()
+        }
+    }
 }
 
 impl Vertex {
@@ -63,7 +116,7 @@ impl Vertex {
     fn generate_sphere() -> (Vec<Vertex>, Vec<u16>) {
         let mut indices: Vec<u16> = vec![];
         let mut vertices: Vec<Vertex> = vec![];
-        let d_center: f32 = 0.5;
+        let d_center: f32 = -0.2;
         
         for ring in 0..=12 { // theta = top to bottom
             let theta = ring as f32 * (PI / 12.0);
@@ -102,12 +155,12 @@ impl Vertex {
         let mut indices: Vec<u16> = vec![]; // Drawing order list 3 values in row will be connected
         let mut vertices: Vec<Vertex> = vec![];
         let mut x = -1.0;
-        let mut y = -1.0;
-        let z = 0.0;
+        let y = 0.0;
+        let mut z = 0.0;
         for row in 0..=10 {
             x = -1.0;
             if row >= 1 {
-                y = y + 0.2;
+                z = z + 0.2;
             }
             for col in 0..=10 {
             vertices.push(Vertex {
@@ -223,6 +276,22 @@ impl Gfx {
                 desired_maximum_frame_latency: 2,
         };
 
+        let instances = vec![
+            MeshInstance {
+                translation: Vec3::new(0.0, 0.5, 0.0),
+                scale: Vec3::ONE,
+                rotation: Quat::IDENTITY,
+            }
+        ];
+
+        let instance_data = instances.iter().map(MeshInstance::to_raw).collect::<Vec<_>>();
+        let instance_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor{
+                label: Some("Instance Buffer"),
+                contents: bytemuck::cast_slice(&instance_data),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
 
         let gfx = Gfx {
@@ -240,6 +309,8 @@ impl Gfx {
             size,
             meshes,
             depth_texture,
+            instances,
+            instance_buffer,
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
@@ -329,6 +400,7 @@ impl Gfx {
                 entry_point: "vs_main",
                 buffers: &[
                     Vertex::desc(),
+                    MeshInstanceRaw::desc()
                 ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
@@ -416,19 +488,23 @@ impl Gfx {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            // We give renderer Camera data so it can use it do caculation based on camera angle
+            // We give renderer Camera data so it can use it do calculation based on camera angle
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            //draw Sphere
+
+            // Draw Sphere
             pass.set_pipeline(&self.triangle_render_pipeline);
-            // We bind out vertexes to our first buffer slot, Secondly we let our vertex buffer use whole buffer
+            // We bind our vertices to slot 0, instance transforms to slot 1
             pass.set_vertex_buffer(0, self.meshes[0].vertex_buffer.slice(..));
+            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             pass.set_index_buffer(self.meshes[0].index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            // We loop though our indeci buffer draw all the indicies in order (0,1,2 -> traingle 1) (1,3,2 -> traingle 2)
-            pass.draw_indexed(0..self.meshes[0].num_indices, 0, 0..1);
-            // Draw Wireframe
+            // Draw all indices, once per instance
+            pass.draw_indexed(0..self.meshes[0].num_indices, 0, 0..self.instances.len() as _);
+
+            // Draw Wireframe grid
             pass.set_pipeline(&self.line_list_render_pipeline);
             pass.set_vertex_buffer(0, self.meshes[1].vertex_buffer.slice(..));
             pass.set_index_buffer(self.meshes[1].index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            // Single instance, no instancing needed for the grid
             pass.draw_indexed(0..self.meshes[1].num_indices, 0, 0..1);
         }
 
