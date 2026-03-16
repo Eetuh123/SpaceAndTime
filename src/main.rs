@@ -256,9 +256,9 @@ impl Gfx {
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        //  We use our Device (like a remove to our specific GPU) buffer pushes the data into GPU
+        //creates A buffer list of indecies which our GPU can read
         let index_buffer= device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Indedx Buffer"),
+            label: Some("Index Buffer"),
             contents: bytemuck::cast_slice(&indices), // Converts Vec into raw bytes so GPU understands
             usage: wgpu::BufferUsages::INDEX, // It tells how to use this specific buffer
         });
