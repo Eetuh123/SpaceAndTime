@@ -1,12 +1,14 @@
 mod camera;
+mod texture;
 use std::{f32::consts::PI, sync::Arc};
 use glam::Vec3;
 use winit::keyboard::KeyCode;
-use wgpu::util::DeviceExt;
+use wgpu::{util::DeviceExt};
 use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
 
+use crate::texture::Texture;
 use crate::camera::{Camera, CameraController, CameraUniform};
 
 #[repr(C)]
@@ -36,6 +38,7 @@ struct Gfx {
     camera_bind_group: wgpu::BindGroup,
     meshes: Vec<Mesh>,
     size: winit::dpi::PhysicalSize<u32>,
+    depth_texture: Texture,
 }
 
 impl Vertex {
@@ -209,6 +212,19 @@ impl Gfx {
 
         let camera_controller = CameraController::new(0.2);
 
+        let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: size.width.max(1),
+                height: size.height.max(1),
+                present_mode: wgpu::PresentMode::Fifo,
+                alpha_mode: caps.alpha_modes[0],
+                view_formats: vec![],
+                desired_maximum_frame_latency: 2,
+        };
+
+        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "depth_texture");
+
         let gfx = Gfx {
             surface,
             device,
@@ -220,18 +236,10 @@ impl Gfx {
             camera_bind_group,
             line_list_render_pipeline,
             triangle_render_pipeline,
-            config: wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format,
-                width: size.width.max(1),
-                height: size.height.max(1),
-                present_mode: wgpu::PresentMode::Fifo,
-                alpha_mode: caps.alpha_modes[0],
-                view_formats: vec![],
-                desired_maximum_frame_latency: 2,
-            },
+            config,
             size,
             meshes,
+            depth_texture,
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
@@ -343,7 +351,13 @@ impl Gfx {
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState { 
+                format: texture::Texture::DEPTH_FORMAT, 
+                depth_write_enabled: true, 
+                depth_compare: wgpu::CompareFunction::Less, 
+                stencil: wgpu::StencilState::default(), 
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -361,6 +375,7 @@ impl Gfx {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
+        self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "depth_texture")
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -390,7 +405,14 @@ impl Gfx {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { 
+                    view: &self.depth_texture.view, 
+                    depth_ops: Some(wgpu::Operations { 
+                        load: wgpu::LoadOp::Clear(1.0), 
+                        store: wgpu::StoreOp::Store,
+                    }), 
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
