@@ -7,8 +7,9 @@ Space and time visualizer built with Rust and wgpu, which displays how objects i
 | File | Purpose |
 |------|---------|
 | main.rs | Pipeline creation window interactions basically the machine what makes the whole thing run |
-| camera.rs | camera controls |
-| texture.rs | depth buffer |
+| camera.rs | Camera controls |
+| texture.rs | Depth buffer |
+| gravity.rs | Gravitys uniform and intesity |
 | shader.wgsl | Shaders |
 
 ## Currently implemented
@@ -16,9 +17,9 @@ Space and time visualizer built with Rust and wgpu, which displays how objects i
 - Space and time grid
 - Depth buffer
 - Camera movement
+- Basic interaction with grid and objects in space
 
 ## Planned
-- Space grid interactivity with objects
 - Black hole distortion to the light
 - Gravity interaction between objects
 
@@ -37,4 +38,5 @@ Space and time visualizer built with Rust and wgpu, which displays how objects i
 | W/S | Z-axis |
 | A/D | Roates around the center point |
 | Shift + A/D | X-Axis |
+| Shift + W/S | Y-Axis |
 | Escape | Close |
