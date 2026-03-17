@@ -1,5 +1,6 @@
 mod camera;
 mod texture;
+mod gravity;
 use std::{f32::consts::PI, sync::Arc};
 use glam::{Mat4, Quat, Vec3};
 use winit::{dpi::Position, keyboard::KeyCode};
@@ -8,7 +9,7 @@ use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
 
-use crate::texture::Texture;
+use crate::{gravity::GravityUniform, texture::Texture};
 use crate::camera::{Camera, CameraController, CameraUniform};
 
 #[repr(C)]
@@ -46,6 +47,9 @@ struct Gfx {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    gravity_uniform: GravityUniform,
+    gravity_buffer: wgpu::Buffer,
+    gravity_bind_group: wgpu::BindGroup,
     meshes: Vec<Mesh>,
     size: winit::dpi::PhysicalSize<u32>,
     depth_texture: Texture,
@@ -188,14 +192,33 @@ impl Vertex {
 
 impl Gfx {
     fn update(&mut self) {
+        self.gravity_uniform.update(self.sphere_instances[0].translation);
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(&self.gravity_buffer, 0, bytemuck::cast_slice(&[self.gravity_uniform]));
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
     fn new(window: &Arc<winit::window::Window>) -> Self {
         let size = window.inner_size();
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
+
+        let sphere_instances = vec![
+            MeshInstance {
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                scale: Vec3::ONE,
+                rotation: Quat::IDENTITY,
+            }
+        ];
+        let grid_instances = vec![
+            MeshInstance {
+                translation: Vec3::ZERO,
+                scale: Vec3::ONE,
+                rotation: Quat::IDENTITY,
+            }
+        ];
+
+        let gravity_uniform = GravityUniform::new(sphere_instances[0].translation);
 
         // We create Camera type variable
         let camera = Camera {
@@ -244,6 +267,9 @@ impl Gfx {
             Gfx::create_mesh(&device, &sphere_vertecies, &sphere_indices),
             Gfx::create_mesh(&device, &grid_vertices, &grid_indices),
         ];
+
+        let (gravity_buffer, gravity_bind_group_layout, gravity_bind_group)  = Gfx::init_gravity_gpu(&device, &gravity_uniform);
+
  
         let (camera_buffer, camera_bind_group_layout, camera_bind_group) = Gfx::init_camera_gpu(&device, &camera_uniform);
         // This is all the layout what will ever be used
@@ -251,15 +277,16 @@ impl Gfx {
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
-                    &camera_bind_group_layout
+                    &camera_bind_group_layout,
+                    &gravity_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             }
         );
         let line_list_render_pipeline = Gfx::create_pipeline(
-            &device, &render_pipeline_layout, &shader, format, wgpu::PrimitiveTopology::LineList, wgpu::PolygonMode::Line);
+            &device, &render_pipeline_layout, &shader, format, wgpu::PrimitiveTopology::LineList, wgpu::PolygonMode::Line, "vs_main");
         let triangle_render_pipeline = Gfx::create_pipeline(
-            &device, &render_pipeline_layout, &shader, format, wgpu::PrimitiveTopology::TriangleList, wgpu::PolygonMode::Fill);
+            &device, &render_pipeline_layout, &shader, format, wgpu::PrimitiveTopology::TriangleList, wgpu::PolygonMode::Fill, "vs_main_no_gravity");
 
 
         let camera_controller = CameraController::new(0.2);
@@ -275,21 +302,6 @@ impl Gfx {
                 desired_maximum_frame_latency: 2,
         };
 
-        let sphere_instances = vec![
-            MeshInstance {
-                translation: Vec3::new(0.0, 2.0, 0.0),
-                scale: Vec3::ONE,
-                rotation: Quat::IDENTITY,
-            }
-        ];
-        let grid_instances = vec![
-            MeshInstance {
-                translation: Vec3::ZERO,
-                scale: Vec3::ONE,
-                rotation: Quat::IDENTITY,
-            }
-        ];
-
         let sphere_instances_buffer = Gfx::create_instance_buffer(&device, &sphere_instances);
         let grid_instances_buffer = Gfx::create_instance_buffer(&device, &grid_instances);
 
@@ -304,6 +316,9 @@ impl Gfx {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            gravity_uniform,
+            gravity_buffer,
+            gravity_bind_group,
             line_list_render_pipeline,
             triangle_render_pipeline,
             config,
@@ -403,6 +418,45 @@ impl Gfx {
 
         (camera_buffer,camera_bind_group_layout,camera_bind_group)
     }
+
+    fn init_gravity_gpu(
+        device: &wgpu::Device,
+        gravity_uniform: &GravityUniform) -> (wgpu::Buffer, wgpu::BindGroupLayout,wgpu::BindGroup) {
+        let gravity_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Gravity_Buffer"),
+            contents: bytemuck::cast_slice(&[*gravity_uniform]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let gravity_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { 
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }
+            ], 
+        label: Some("gravity_bind_group_layout"),
+        });
+        let gravity_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &gravity_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                binding: 0,
+                resource: gravity_buffer.as_entire_binding(),
+            }
+        ],
+        label: Some("gravity_bind_group"),
+        });
+
+        (gravity_buffer,gravity_bind_group_layout,gravity_bind_group)
+    }
+
     fn create_pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
@@ -410,13 +464,14 @@ impl Gfx {
         format: wgpu::TextureFormat,
         topology: wgpu::PrimitiveTopology,
         polygon_mode: wgpu::PolygonMode,
+        vertex_entry: &str,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Render Pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: vertex_entry,
                 buffers: &[
                     Vertex::desc(),
                     MeshInstanceRaw::desc()
@@ -488,9 +543,9 @@ impl Gfx {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.5,
-                            g: 0.09,
-                            b: 0.10,
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -508,7 +563,8 @@ impl Gfx {
                 timestamp_writes: None,
             });
             // We give renderer Camera data so it can use it do calculation based on camera angle
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(0, &self.camera_bind_group , &[]);
+            pass.set_bind_group(1, &self.gravity_bind_group , &[]);
 
             // Draw Sphere
             pass.set_pipeline(&self.triangle_render_pipeline);
