@@ -1,10 +1,12 @@
 mod camera;
 mod texture;
 mod gravity;
+mod body;
+mod physics;
 use std::{f32::consts::PI, sync::Arc};
 use glam::{Mat4, Quat, Vec3};
-use winit::{dpi::Position, keyboard::KeyCode};
-use wgpu::{Instance, core::instance, util::DeviceExt};
+use winit::{keyboard::KeyCode};
+use wgpu::{util::DeviceExt};
 use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
@@ -345,7 +347,7 @@ impl Gfx {
             &wgpu::util::BufferInitDescriptor{
                 label: Some("Instance Buffer"),
                 contents: bytemuck::cast_slice(&instance_data),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             });
             
         instance_buffer
