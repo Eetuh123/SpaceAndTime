@@ -1,9 +1,6 @@
-pub struct PhysicsConstants {
-    G: f32,
-    C: f32,
-}
+pub struct PhysicsConstants;
 
 impl PhysicsConstants {
-    const G: f32 = 6.674e-11; // Gravitational constant
-    const C: f32 = 299_729_458.0; // Speed of light m/s
+    pub const G: f32 = 1.0; // Gravitational constant ( 6.674*10^11)
+    pub const C: f32 = 299_792_458.0; // Speed of light m/s
 }

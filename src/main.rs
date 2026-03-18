@@ -1,6 +1,6 @@
 mod camera;
 mod texture;
-mod gravity;
+mod spacetime;
 mod body;
 mod physics;
 use std::{f32::consts::PI, sync::Arc};
@@ -11,7 +11,7 @@ use winit::{
     event::*, event_loop::{ControlFlow, EventLoop}, keyboard::PhysicalKey, window::WindowBuilder
 };
 
-use crate::{gravity::GravityUniform, texture::Texture};
+use crate::{body::Body, spacetime::SpacetimeUniform, texture::Texture};
 use crate::camera::{Camera, CameraController, CameraUniform};
 
 #[repr(C)]
@@ -49,7 +49,7 @@ struct Gfx {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    gravity_uniform: GravityUniform,
+    space_time_uniform: SpacetimeUniform,
     gravity_buffer: wgpu::Buffer,
     gravity_bind_group: wgpu::BindGroup,
     meshes: Vec<Mesh>,
@@ -59,7 +59,8 @@ struct Gfx {
     sphere_instances: Vec<MeshInstance>,
     grid_instances_buffer: wgpu::Buffer,
     sphere_instances_buffer: wgpu::Buffer,
-
+    list_of_bodies: Vec<Body>,
+    last_frame_time: std::time::Instant,
 }
 
 impl MeshInstanceRaw {
@@ -161,9 +162,9 @@ impl Vertex {
         (vertices, indices)
     }
     fn generate_grid() -> (Vec<Vertex>, Vec<u32>) {
-        let size: f32 = 8.0;
+        let size: f32 = 16.0;
         let start = -size;
-        let lines: f32 = 100.0;
+        let lines: f32 = 200.0;
         let step = (size * 2.0) / lines;
         let mut indices: Vec<u32> = vec![]; // Drawing order list 3 values in row will be connected
         let mut vertices: Vec<Vertex> = vec![];
@@ -194,10 +195,35 @@ impl Vertex {
 
 impl Gfx {
     fn update(&mut self) {
-        self.gravity_uniform.update(self.sphere_instances[0].translation);
+
+        let now = std::time::Instant::now();
+        let delta_time = (now - self.last_frame_time).as_secs_f32();
+        self.last_frame_time = now;
+
+        let mut forces = vec![Vec3::ZERO; self.list_of_bodies.len()];
+
+        for i in 0..self.list_of_bodies.len() {
+            for j in 0..self.list_of_bodies.len() {
+                if i != j {
+                    forces[i] += self.list_of_bodies[i].force_from(&self.list_of_bodies[j]);
+                }
+            }
+        }
+
+        for (i, body) in self.list_of_bodies.iter().enumerate() {
+            self.sphere_instances[i].translation = body.position;
+        }
+
+        for (body, force) in self.list_of_bodies.iter_mut().zip(forces.iter()) {
+            body.step(*force, delta_time);
+        }
+
+        self.space_time_uniform.update_all(&self.list_of_bodies);
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_proj(&self.camera);
-        self.queue.write_buffer(&self.gravity_buffer, 0, bytemuck::cast_slice(&[self.gravity_uniform]));
+        let instance_data = self.sphere_instances.iter().map(MeshInstance::to_raw).collect::<Vec<_>>();
+        self.queue.write_buffer(&self.sphere_instances_buffer, 0, bytemuck::cast_slice(&instance_data));
+        self.queue.write_buffer(&self.gravity_buffer, 0, bytemuck::cast_slice(&[self.space_time_uniform]));
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
     fn new(window: &Arc<winit::window::Window>) -> Self {
@@ -205,9 +231,29 @@ impl Gfx {
         let instance = wgpu::Instance::default();
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
 
+        let list_of_bodies = vec![
+            Body {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                velocity: Vec3::new(0.0, 0.0, 0.0),
+                mass: 50.0,
+                radius: 1.0,
+            },
+            Body {
+                position: Vec3::new(3.0, 4.0, 3.0),
+                velocity: Vec3::new(-0.707, 0.0, 0.707) * 1.33,
+                mass: 10.0,
+                radius: 1.0,
+            }
+        ];
+
         let sphere_instances = vec![
             MeshInstance {
-                translation: Vec3::new(0.0, 1.0, 0.0),
+                translation: list_of_bodies[0].position,
+                scale: Vec3::ONE,
+                rotation: Quat::IDENTITY,
+            },
+            MeshInstance {
+                translation: list_of_bodies[1].position,
                 scale: Vec3::ONE,
                 rotation: Quat::IDENTITY,
             }
@@ -220,7 +266,7 @@ impl Gfx {
             }
         ];
 
-        let gravity_uniform = GravityUniform::new(sphere_instances[0].translation);
+        let space_time_uniform = SpacetimeUniform::new(&list_of_bodies);
 
         // We create Camera type variable
         let camera = Camera {
@@ -270,7 +316,7 @@ impl Gfx {
             Gfx::create_mesh(&device, &grid_vertices, &grid_indices),
         ];
 
-        let (gravity_buffer, gravity_bind_group_layout, gravity_bind_group)  = Gfx::init_gravity_gpu(&device, &gravity_uniform);
+        let (gravity_buffer, gravity_bind_group_layout, gravity_bind_group)  = Gfx::init_gravity_gpu(&device, &space_time_uniform);
 
  
         let (camera_buffer, camera_bind_group_layout, camera_bind_group) = Gfx::init_camera_gpu(&device, &camera_uniform);
@@ -318,7 +364,7 @@ impl Gfx {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
-            gravity_uniform,
+            space_time_uniform,
             gravity_buffer,
             gravity_bind_group,
             line_list_render_pipeline,
@@ -331,6 +377,8 @@ impl Gfx {
             sphere_instances,
             grid_instances_buffer,
             sphere_instances_buffer,
+            list_of_bodies,
+            last_frame_time: std::time::Instant::now(),
         };
 
         gfx.surface.configure(&gfx.device, &gfx.config);
@@ -423,10 +471,10 @@ impl Gfx {
 
     fn init_gravity_gpu(
         device: &wgpu::Device,
-        gravity_uniform: &GravityUniform) -> (wgpu::Buffer, wgpu::BindGroupLayout,wgpu::BindGroup) {
+        space_time_uniform: &SpacetimeUniform) -> (wgpu::Buffer, wgpu::BindGroupLayout,wgpu::BindGroup) {
         let gravity_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Gravity_Buffer"),
-            contents: bytemuck::cast_slice(&[*gravity_uniform]),
+            contents: bytemuck::cast_slice(&[*space_time_uniform]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
