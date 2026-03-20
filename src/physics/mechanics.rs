@@ -26,7 +26,7 @@ pub fn universal_gravitation(g: f32, m1: f32, m2: f32, r: f32) -> f32 {
 // Δt: time from last interval
 // returns: new velocity value
 pub fn velocity(v: Vec3, f: Vec3, m: f32, t: f32,) -> Vec3 {
-    (v + (f / m) * t)
+    v + (f / m) * t
 }
 // Position update | Paikan päivitys
 // x = x + v * Δt
@@ -35,5 +35,5 @@ pub fn velocity(v: Vec3, f: Vec3, m: f32, t: f32,) -> Vec3 {
 // Δt: time from last interval
 // returns: new position
 pub fn position(x: Vec3, v: Vec3, t: f32) -> Vec3 {
-    (x + v * t)
+    x + v * t
 }

@@ -14,7 +14,7 @@ impl Body {
         let d = math::distance(self.position, other_body.position);
         let normalized_direction = math::normalize(other_body.position - self.position);
         let f_magnitude  = mechanics::universal_gravitation(PhysicsConstants::G, self.mass, other_body.mass, d);
-        (normalized_direction * f_magnitude)
+        normalized_direction * f_magnitude
     }
     pub fn step(&mut self, force: Vec3, delta_time: f32) {
         self.velocity = mechanics::velocity(self.velocity, force, self.mass, delta_time);

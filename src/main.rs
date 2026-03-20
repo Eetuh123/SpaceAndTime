@@ -235,12 +235,12 @@ impl Gfx {
             Body {
                 position: Vec3::new(0.0, 1.0, 0.0),
                 velocity: Vec3::new(0.0, 0.0, 0.0),
-                mass: 50.0,
+                mass: 75.0,
                 radius: 1.0,
             },
             Body {
-                position: Vec3::new(3.0, 4.0, 3.0),
-                velocity: Vec3::new(-0.707, 0.0, 0.707) * 1.33,
+                position: Vec3::new(3.0, 1.0, 3.0),
+                velocity: Vec3::new(-0.707, 0.0, 0.707) * 3.8,
                 mass: 10.0,
                 radius: 1.0,
             }
@@ -270,13 +270,13 @@ impl Gfx {
 
         // We create Camera type variable
         let camera = Camera {
-            eye: (0.0, 1.0, 2.0).into(),
+            eye: (0.0, 5.0, 10.0).into(),
             target: (0.0,0.0,0.0).into(),
             up: Vec3::Y,
             aspect: size.width as f32 / size.height as f32,
-            fovy: 35.0,
+            fovy: 65.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 200.0,
         };
 
         // We create conversion of camera struct to more GPU friendly format (flat matrix)

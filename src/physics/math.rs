@@ -6,7 +6,7 @@ use glam::Vec3;
 // b: Second point coordinates
 // returns: returns distance between A and B
 pub fn distance(a: Vec3, b: Vec3 ) -> f32 {
-    (f32::sqrt((a.x - b.x).powi(2)+(a.y - b.y).powi(2)+(a.z - b.z).powi(2)))
+    f32::sqrt((a.x - b.x).powi(2)+(a.y - b.y).powi(2)+(a.z - b.z).powi(2))
 }
 // Vector Normalization | Vektorin normalisointi
 // n = v / |v|

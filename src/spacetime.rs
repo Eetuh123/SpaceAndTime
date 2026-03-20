@@ -1,7 +1,4 @@
-use glam::{Vec3};
-use winit::dpi::Position;
-
-use crate::body::{self, Body};
+use crate::body::{Body};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
