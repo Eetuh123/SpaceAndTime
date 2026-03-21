@@ -1,5 +1,9 @@
 use glam::{Vec3, Mat4};
 use winit::keyboard::KeyCode;
+use winit::event::MouseButton;
+use winit::event::DeviceEvent::MouseMotion;
+
+use crate::body::{self, Body};
 
 pub struct Camera {
     pub eye: Vec3,
@@ -18,6 +22,11 @@ pub struct CameraController {
     is_left_pressed: bool,
     is_right_pressed: bool,
     is_shift_pressed: bool,
+    is_number_pressed_1: bool,
+    is_number_pressed_2: bool,
+    is_number_pressed_3: bool,
+    is_number_pressed_4: bool,
+    is_left_mouse_pressed: bool,
 }
 
 #[repr(C)]
@@ -45,9 +54,27 @@ impl CameraController {
             is_left_pressed: false,
             is_right_pressed: false,
             is_shift_pressed: false,
+            is_number_pressed_1: false,
+            is_number_pressed_2: false,
+            is_number_pressed_3: false,
+            is_number_pressed_4: false,
+            is_left_mouse_pressed: false,
         }
     }
+    pub fn handle_mouse(&mut self, mouse: MouseButton, is_pressed: bool) -> bool {
+        match mouse {
+            MouseButton::Left => {
+                self.is_left_mouse_pressed = is_pressed;
+                true
+            }
+            _ => false
+        }
+    }
+    pub fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
+    if self.is_left_mouse_pressed {
 
+        }
+    }
     pub fn handle_key(&mut self, code: KeyCode, is_pressed: bool) -> bool {
         match code {
             KeyCode::KeyW | KeyCode::ArrowUp => {
@@ -70,10 +97,26 @@ impl CameraController {
                 self.is_shift_pressed = is_pressed;
                 true
             }
+            KeyCode::Numpad1 | KeyCode::Digit1 => {
+                self.is_number_pressed_1 = is_pressed;
+                true
+            }
+            KeyCode::Numpad2 | KeyCode::Digit2 => {
+                self.is_number_pressed_2 = is_pressed;
+                true
+            }
+            KeyCode::Numpad3 | KeyCode::Digit3 => {
+                self.is_number_pressed_3 = is_pressed;
+                true
+            }
+            KeyCode::Numpad4 | KeyCode::Digit4 => {
+                self.is_number_pressed_4 = is_pressed;
+                true
+            }
             _ => false,
         }
-    }
-    pub fn update_camera(&self, camera: &mut Camera) {
+    } 
+    pub fn update_camera(&self, camera: &mut Camera, body: &[Body]) {
         let forward = camera.target - camera.eye;
         let forward_norm = forward.normalize();
         let forward_mag = forward.length();
@@ -117,7 +160,12 @@ impl CameraController {
                 camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
             }
         }
-
+        if self.is_number_pressed_1 {
+            camera.target = body[0].position;
+        }
+        if self.is_number_pressed_2 {
+            camera.target = body[1].position;
+        }
     }
 }
 impl Camera {

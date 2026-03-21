@@ -219,7 +219,7 @@ impl Gfx {
         }
 
         self.space_time_uniform.update_all(&self.list_of_bodies);
-        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_controller.update_camera(&mut self.camera,&self.list_of_bodies);
         self.camera_uniform.update_view_proj(&self.camera);
         let instance_data = self.sphere_instances.iter().map(MeshInstance::to_raw).collect::<Vec<_>>();
         self.queue.write_buffer(&self.sphere_instances_buffer, 0, bytemuck::cast_slice(&instance_data));
