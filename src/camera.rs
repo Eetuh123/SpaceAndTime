@@ -26,7 +26,8 @@ pub struct CameraController {
     is_number_pressed_2: bool,
     is_number_pressed_3: bool,
     is_number_pressed_4: bool,
-    is_left_mouse_pressed: bool,
+    pub is_left_mouse_pressed: bool,
+    mouse_delta: (f32, f32),
 }
 
 #[repr(C)]
@@ -59,6 +60,7 @@ impl CameraController {
             is_number_pressed_3: false,
             is_number_pressed_4: false,
             is_left_mouse_pressed: false,
+            mouse_delta: (0.0,0.0),
         }
     }
     pub fn handle_mouse(&mut self, mouse: MouseButton, is_pressed: bool) -> bool {
@@ -70,9 +72,10 @@ impl CameraController {
             _ => false
         }
     }
-    pub fn handle_mouse_motion(&mut self, delta: (f64, f64)) {
-    if self.is_left_mouse_pressed {
-
+    pub fn handle_mouse_motion(&mut self, delta: (f32, f32)) {
+        if self.is_left_mouse_pressed {
+            self.mouse_delta.0 += delta.0 * 0.1;
+            self.mouse_delta.1 += delta.1 * 0.1;
         }
     }
     pub fn handle_key(&mut self, code: KeyCode, is_pressed: bool) -> bool {
@@ -116,11 +119,15 @@ impl CameraController {
             _ => false,
         }
     } 
-    pub fn update_camera(&self, camera: &mut Camera, body: &[Body]) {
+    pub fn update_camera(&mut self, camera: &mut Camera, body: &[Body]) {
+        let yaw = self.mouse_delta.0;
+        let pitch = self.mouse_delta.1;
         let forward = camera.target - camera.eye;
         let forward_norm = forward.normalize();
         let forward_mag = forward.length();
         let speed = if self.is_shift_pressed { self.speed * 1.0 } else { self.speed };
+        let right = forward_norm.cross(camera.up);
+
 
         if self.is_up_pressed && forward_mag > speed {
             if self.is_shift_pressed {
@@ -139,11 +146,6 @@ impl CameraController {
             }
         }
         
-        let right = forward_norm.cross(camera.up);
-
-        let forward = camera.target - camera.eye;
-        let forward_mag = forward.length();
-
         if self.is_right_pressed {
             if self.is_shift_pressed {
                 camera.eye += right * speed;
@@ -166,6 +168,14 @@ impl CameraController {
         if self.is_number_pressed_2 {
             camera.target = body[1].position;
         }
+        if self.is_left_mouse_pressed {
+            camera.eye.x -= yaw;
+            camera.target.x -= yaw;
+            camera.eye.z -= pitch;
+            camera.target.z -= pitch;
+        }
+        self.mouse_delta = (0.0, 0.0);
+
     }
 }
 impl Camera {

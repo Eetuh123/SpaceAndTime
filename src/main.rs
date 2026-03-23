@@ -661,6 +661,10 @@ fn main() {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::Resized(new_size) => gfx.resize(new_size),
+                    WindowEvent::MouseInput { 
+                        button: MouseButton::Left, state, .. } => {
+                        gfx.camera_controller.is_left_mouse_pressed = state == ElementState::Pressed;
+                    },
                     WindowEvent::KeyboardInput { 
                         event: KeyEvent {
                             physical_key: PhysicalKey::Code(keycode),
@@ -683,6 +687,9 @@ fn main() {
                         Err(_) => {}
                     },
                     _ => {}
+                },
+                Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta: (x, y) }, .. } => {
+                    gfx.camera_controller.handle_mouse_motion((x as f32, y as f32));
                 },
                 Event::AboutToWait => {
                     gfx.update();
