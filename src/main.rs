@@ -219,7 +219,7 @@ impl Gfx {
         }
 
         self.space_time_uniform.update_all(&self.list_of_bodies);
-        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_controller.update_camera(&mut self.camera,&self.list_of_bodies);
         self.camera_uniform.update_view_proj(&self.camera);
         let instance_data = self.sphere_instances.iter().map(MeshInstance::to_raw).collect::<Vec<_>>();
         self.queue.write_buffer(&self.sphere_instances_buffer, 0, bytemuck::cast_slice(&instance_data));
@@ -661,6 +661,10 @@ fn main() {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => elwt.exit(),
                     WindowEvent::Resized(new_size) => gfx.resize(new_size),
+                    WindowEvent::MouseInput { 
+                        button: MouseButton::Left, state, .. } => {
+                        gfx.camera_controller.is_left_mouse_pressed = state == ElementState::Pressed;
+                    },
                     WindowEvent::KeyboardInput { 
                         event: KeyEvent {
                             physical_key: PhysicalKey::Code(keycode),
@@ -683,6 +687,9 @@ fn main() {
                         Err(_) => {}
                     },
                     _ => {}
+                },
+                Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta: (x, y) }, .. } => {
+                    gfx.camera_controller.handle_mouse_motion((x as f32, y as f32));
                 },
                 Event::AboutToWait => {
                     gfx.update();
